@@ -1,28 +1,38 @@
 import { Platform, useWindowDimensions } from 'react-native';
 
-// Same dark industrial palette as the desktop dashboard.
+// Dark field theme built on the IWM brand: navy ground, leaf-green accent,
+// gold for emphasis. Kept dark so the screen stays readable outdoors and
+// easy on the battery.
 export const C = {
-  bg: '#0f1117',
-  bar: '#080b12',
-  panel: '#13161f',
-  card: '#1a1d26',
-  sunk: '#0d0f16',
-  border: '#2a2d3a',
-  borderHi: '#2e3248',
-  text: '#e8eaf0',
-  soft: '#c0c4d8',
-  dim: '#7a7f9a',
-  faint: '#4a4f6a',
-  accent: '#00d4aa',
-  green: '#00e676',
-  greenDim: '#00a870',
-  red: '#ff4444',
-  redDim: '#cc3333',
-  amber: '#c88a00',
-  blue: '#4488cc',
-  purple: '#9966cc',
+  bg: '#0a1020',
+  bar: '#070c18',
+  panel: '#0f172b',
+  card: '#16203a',
+  sunk: '#080d1a',
+  border: '#22304f',
+  borderHi: '#2c3d63',
+  text: '#eaeef7',
+  soft: '#c3cbe0',
+  dim: '#8c98b6',
+  faint: '#6a7696',
+  accent: '#6cc24a',
+  accentSoft: '#6cc24a22',
+  gold: '#d9a441',
+  navy: '#0d2a5c',
+  green: '#3ddc84',
+  greenDim: '#2fae66',
+  red: '#ff5a5a',
+  redDim: '#e05050',
+  amber: '#e0a030',
+  blue: '#5aa9ff',
+  purple: '#a98bea',
+  co2: '#5aa9ff',
+  temp: '#f08a5d',
+  humid: '#4fd1a5',
 };
 
+// Numbers, IDs and log lines stay monospaced so columns line up; everything
+// else uses the phone's own font.
 export const MONO = Platform.select({
   ios: 'Menlo',
   android: 'monospace',
@@ -31,10 +41,10 @@ export const MONO = Platform.select({
 
 // [background, pressed, border, foreground]
 export const TONES = {
-  green: ['#00351f', '#004d2e', '#00a870', '#00ffaa'],
-  red: ['#3d0000', '#5c0000', '#cc2222', '#ff9999'],
-  steel: ['#1a2230', '#243044', '#4a6182', '#a8c4e0'],
-  blue: ['#002a42', '#003d5e', '#0078b4', '#66d4ff'],
+  green: ['#0c3320', '#12482d', '#2fae66', '#7dffb5'],
+  red: ['#3a0d10', '#551419', '#d64545', '#ffaaaa'],
+  steel: ['#18233a', '#22314f', '#4f6a96', '#b4cdee'],
+  blue: ['#0c2747', '#123763', '#2f7fd6', '#8cc4ff'],
 } as const;
 export type Tone = keyof typeof TONES;
 
@@ -48,3 +58,6 @@ export function useWide(): boolean {
   const { width } = useWindowDimensions();
   return width - (width >= RAIL_MIN ? RAIL_W : 0) >= TABLET_MIN;
 }
+
+// Animations run on the native thread where there is one.
+export const NATIVE_DRIVER = Platform.OS !== 'web';

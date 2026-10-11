@@ -1,13 +1,47 @@
-import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { C, MONO, useWide } from '../theme';
 import { useStore } from '../store';
 import { deleteSaved, SavedFile, shareSaved } from '../files';
-import { ActionTile, Btn, Field, Help, LogRow, Panel, s as ui, SectionLabel, useConfirm } from '../ui';
+import { tick } from '../haptics';
+import { ActionTile, Btn, Field, Help, LogRow, Panel, ProgressBar, s as ui, SectionLabel, T, useConfirm } from '../ui';
 import { fmtDateTime, humanizeSeconds, parseDateTime, rtcTimestamp, useNow } from '../util';
 
 const MAX_SECONDS = 999999;
 const toSeconds = (t: string) => Math.min(MAX_SECONDS, Math.max(1, parseInt(t, 10) || 1));
+
+/** A finger-sized −/+ that repeats while it is held down. */
+function StepBtn({ sign, onStep }: { sign: '+' | '−'; onStep: () => void }) {
+  const step = useRef(onStep);
+  step.current = onStep;
+  const delay = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const repeat = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stop = () => {
+    if (delay.current) clearTimeout(delay.current);
+    if (repeat.current) clearInterval(repeat.current);
+    delay.current = repeat.current = null;
+  };
+  const start = () => {
+    stop();
+    tick();
+    step.current();
+    delay.current = setTimeout(() => {
+      repeat.current = setInterval(() => step.current(), 70);
+    }, 400);
+  };
+  useEffect(() => stop, []);
+  return (
+    <Pressable
+      onPressIn={start}
+      onPressOut={stop}
+      accessibilityRole="button"
+      accessibilityLabel={sign === '+' ? 'Add 5 seconds' : 'Take off 5 seconds'}
+      style={({ pressed }) => [st.step, pressed && { backgroundColor: '#1f3050', borderColor: C.accent }]}
+    >
+      <T style={st.stepText}>{sign}</T>
+    </Pressable>
+  );
+}
 
 /** A caption, a −/+ number box, and a plain-words readout of what it means. */
 function DurationRow({
@@ -22,48 +56,36 @@ function DurationRow({
   const step = (by: number) => onChange(String(Math.min(MAX_SECONDS, Math.max(1, toSeconds(value) + by))));
   return (
     <View style={{ gap: 4 }}>
-      <Text style={ui.fieldLabel}>{caption}</Text>
+      <T style={ui.fieldLabel}>{caption}</T>
       <View style={{ flexDirection: 'row', gap: 6 }}>
-        <StepBtn sign="−" onPress={() => step(-5)} />
+        <StepBtn sign="−" onStep={() => step(-5)} />
         <TextInput
           style={[ui.input, { flex: 1, textAlign: 'center' }]}
           value={value}
           onChangeText={(t) => onChange(t.replace(/[^0-9]/g, '').slice(0, 6))}
           onBlur={() => onChange(String(toSeconds(value)))}
           keyboardType="number-pad"
+          accessibilityLabel={`${caption}, seconds`}
+          maxLength={6}
           selectTextOnFocus
         />
-        <StepBtn sign="+" onPress={() => step(5)} />
+        <StepBtn sign="+" onStep={() => step(5)} />
       </View>
-      <Text style={st.readout}>= {humanizeSeconds(toSeconds(value))}</Text>
+      <T style={st.readout}>= {humanizeSeconds(toSeconds(value))}</T>
     </View>
-  );
-}
-
-function StepBtn({ sign, onPress }: { sign: string; onPress: () => void }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={sign === '+' ? 'Add 5 seconds' : 'Take off 5 seconds'}
-      style={({ pressed }) => [st.step, pressed && { backgroundColor: '#26304a', borderColor: C.accent }]}
-    >
-      <Text style={st.stepText}>{sign}</Text>
-    </Pressable>
   );
 }
 
 function PhoneClock() {
   const now = useNow();
-  return <Text style={st.clock}>{fmtDateTime(now)}</Text>;
+  return <T style={st.clock}>{fmtDateTime(now)}</T>;
 }
 
 export default function ControlScreen() {
   const store = useStore();
   const confirm = useConfirm();
-  const { onlineIps, busy, files } = store;
+  const { onlineIps, busy, files, progress } = store;
   const n = onlineIps.length;
-
   const wide = useWide();
 
   const [logEvery, setLogEvery] = useState('30');
@@ -84,7 +106,7 @@ export default function ControlScreen() {
     if (busy) return;
     if (n === 0) {
       await notice(
-        'NO DEVICES ONLINE',
+        'NO CHAMBERS ONLINE',
         'No chambers are online right now.\n\nGo to the Monitor tab and tap  🔍 SCAN ALL  first.',
       );
       return;
@@ -135,13 +157,17 @@ export default function ControlScreen() {
   };
 
   const calibrate = () => {
-    const co2 = parseFloat(calCo2);
-    const alt = parseInt(calAlt, 10);
-    const temp = parseFloat(calTemp);
-    if (!(co2 >= 400 && co2 <= 2000) || !(alt >= 0 && alt <= 5000) || !(temp >= -10 && temp <= 10)) {
+    const co2 = Number(calCo2);
+    const alt = Number(calAlt);
+    const temp = Number(calTemp);
+    if (
+      !(co2 >= 400 && co2 <= 2000) ||
+      !(Number.isInteger(alt) && alt >= 0 && alt <= 5000) ||
+      !(temp >= -10 && temp <= 10)
+    ) {
       notice(
         'CHECK THE NUMBERS',
-        'True CO₂ must be 400 – 2000 ppm.\nHeight must be 0 – 5000 m.\nTemperature nudge must be −10 – 10 °C.',
+        'True CO₂ must be 400 – 2000 ppm.\nHeight must be a whole number, 0 – 5000 m.\nTemperature nudge must be −10 – 10 °C.',
       );
       return;
     }
@@ -171,6 +197,7 @@ export default function ControlScreen() {
       title: 'DELETE FILE',
       message: `Delete this copy from this device?\n\n     ${f.name}\n\nThe data on the chamber's SD card is not touched.`,
       yes: 'DELETE',
+      danger: true,
     });
     if (!ok) return;
     try {
@@ -185,7 +212,7 @@ export default function ControlScreen() {
 
   const actions = (
     <View style={{ gap: 8 }}>
-      <SectionLabel>TAP A BUTTON — IT GOES TO EVERY CHAMBER AT ONCE</SectionLabel>
+      <SectionLabel>EVERY CHAMBER AT ONCE</SectionLabel>
       <View style={st.tileRow}>
         <ActionTile glyph="▲" line1="OPEN" line2="THE LIDS" tone="green" disabled={busy} onPress={() => lid('open')} />
         <ActionTile glyph="▼" line1="CLOSE" line2="THE LIDS" tone="steel" disabled={busy} onPress={() => lid('close')} />
@@ -200,10 +227,10 @@ export default function ControlScreen() {
       </View>
 
       <Panel>
-        <View style={st.filesHead}>
-          <Text style={[ui.help, { flex: 1 }]}>
+        <View style={st.head}>
+          <Help style={{ flex: 1 }}>
             📁  {files.length === 0 ? 'No data files copied yet' : `${files.length} data file${files.length !== 1 ? 's' : ''} on this device`}
-          </Text>
+          </Help>
           {files.length > 0 && (
             <Btn small kind="secondary" label={filesOpen ? '▴  HIDE' : '▾  SHOW'} onPress={() => setFilesOpen(!filesOpen)} />
           )}
@@ -212,10 +239,10 @@ export default function ControlScreen() {
           files.map((f) => (
             <View key={f.uri} style={st.fileRow}>
               <View style={{ flex: 1, minWidth: 140 }}>
-                <Text style={st.fileName}>{f.name}</Text>
-                <Text style={ui.help}>
+                <T style={st.fileName}>{f.name}</T>
+                <Help>
                   {f.size.toLocaleString()} B{f.modified ? `  ·  ${fmtDateTime(new Date(f.modified))}` : ''}
-                </Text>
+                </Help>
               </View>
               <Btn small label="SHARE" onPress={() => share(f)} />
               <Btn small kind="danger" label="DELETE" onPress={() => remove(f)} />
@@ -236,12 +263,12 @@ export default function ControlScreen() {
   );
 
   const advanced = (
-    <View style={[st.cols, !wide && { flexDirection: 'column' }]}>
+    <View style={[st.cols, !wide && { flexDirection: 'column', alignItems: 'stretch' }]}>
       <Panel title="CO₂ SENSOR CALIBRATION" style={wide && { flex: 1 }}>
         <Help>Only when a sensor drifts. Outdoor air ≈ 415 ppm.</Help>
-        <Field label="True CO₂ now (ppm)" value={calCo2} onChangeText={setCalCo2} keyboardType="decimal-pad" />
-        <Field label="Height above sea (m)" value={calAlt} onChangeText={setCalAlt} keyboardType="number-pad" />
-        <Field label="Temperature nudge (°C)" value={calTemp} onChangeText={setCalTemp} keyboardType="numbers-and-punctuation" />
+        <Field label="True CO₂ now (ppm)" value={calCo2} onChangeText={setCalCo2} keyboardType="decimal-pad" maxLength={7} />
+        <Field label="Height above sea (m)" value={calAlt} onChangeText={setCalAlt} keyboardType="number-pad" maxLength={4} />
+        <Field label="Temperature nudge (°C)" value={calTemp} onChangeText={setCalTemp} keyboardType="numbers-and-punctuation" maxLength={6} />
         <Btn label="✔  APPLY CALIBRATION TO ALL" onPress={calibrate} disabled={busy} />
       </Panel>
       <Panel title="SET A SPECIFIC CLOCK TIME" style={wide && { flex: 1 }}>
@@ -253,11 +280,12 @@ export default function ControlScreen() {
           value={customTime}
           onChangeText={setCustomTime}
           keyboardType="numbers-and-punctuation"
+          maxLength={19}
         />
         <View style={st.clockBox}>
-          <Text style={st.clockCap}>THIS DEVICE'S CLOCK RIGHT NOW</Text>
+          <T style={st.clockCap}>THIS DEVICE'S CLOCK RIGHT NOW</T>
           <PhoneClock />
-          <Text style={[ui.help, { textAlign: 'center' }]}>the big SET THE CLOCKS TO NOW button sends this</Text>
+          <Help style={{ textAlign: 'center' }}>the big SET THE CLOCKS TO NOW button sends this</Help>
         </View>
         <Btn label="🔄  SEND THIS TIME TO ALL" onPress={sendCustomTime} disabled={busy} />
       </Panel>
@@ -265,18 +293,16 @@ export default function ControlScreen() {
   );
 
   return (
-    <ScrollView
-      contentContainerStyle={st.page}
-      keyboardShouldPersistTaps="handled"
-    >
+    <ScrollView contentContainerStyle={st.page} keyboardShouldPersistTaps="handled">
       <View style={[st.banner, n > 0 && st.bannerOk]}>
-        <Text style={[st.bannerText, { color: n > 0 ? C.accent : C.amber }]}>
-          {busy
-            ? '⏳  Sending — waiting for the chambers to answer...'
+        <T style={[st.bannerText, { color: n > 0 ? C.accent : C.amber }]}>
+          {busy && progress
+            ? `⏳  ${progress.label} — ${progress.done} of ${progress.total} answered`
             : n > 0
-              ? `✅  Broadcasting to  ${n}  online chamber${n !== 1 ? 's' : ''}`
+              ? `✅  Ready — ${n} chamber${n !== 1 ? 's' : ''} online`
               : '⚠  No chambers online — run a Scan on the Monitor tab first'}
-        </Text>
+        </T>
+        {busy && progress ? <ProgressBar value={progress.done / Math.max(1, progress.total)} /> : null}
       </View>
 
       {wide ? (
@@ -298,7 +324,7 @@ export default function ControlScreen() {
       />
       {advOpen && advanced}
 
-      <View style={st.filesHead}>
+      <View style={st.head}>
         <Btn
           kind="secondary"
           label={logOpen ? '▾  WHAT HAPPENED' : '▸  WHAT HAPPENED'}
@@ -310,7 +336,7 @@ export default function ControlScreen() {
       {logOpen && (
         <View style={st.log}>
           {store.actionLog.length === 0 ? (
-            <Text style={[ui.help, { color: C.faint }]}>Each chamber answers here after you press a button...</Text>
+            <Help style={{ color: C.faint }}>Each chamber answers here after you press a button...</Help>
           ) : (
             store.actionLog.slice(0, 60).map((l) => <LogRow key={l.key} line={l} />)
           )}
@@ -325,27 +351,28 @@ const st = StyleSheet.create({
   cols: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
   tileRow: { flexDirection: 'row', gap: 8 },
   banner: {
-    backgroundColor: '#1f1a0d',
-    borderWidth: 2,
-    borderColor: '#f5a62344',
-    borderRadius: 6,
-    padding: 10,
+    backgroundColor: '#2a2010',
+    borderWidth: 1,
+    borderColor: '#e0a03066',
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
   },
-  bannerOk: { backgroundColor: '#0d1f1c', borderColor: '#00d4aa44' },
-  bannerText: { fontFamily: MONO, fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
-  readout: { color: C.accent, fontFamily: MONO, fontSize: 12, fontWeight: '700' },
+  bannerOk: { backgroundColor: '#10261a', borderColor: '#6cc24a55' },
+  bannerText: { fontSize: 14, fontWeight: '700' },
+  readout: { color: C.accent, fontSize: 12, fontWeight: '700' },
   step: {
-    width: 48,
-    minHeight: 44,
-    backgroundColor: '#1f2432',
-    borderWidth: 2,
+    width: 50,
+    minHeight: 46,
+    backgroundColor: C.card,
+    borderWidth: 1.5,
     borderColor: C.borderHi,
-    borderRadius: 5,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stepText: { color: C.accent, fontFamily: MONO, fontSize: 22, fontWeight: '700' },
-  filesHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  stepText: { color: C.accent, fontSize: 24, fontWeight: '700' },
+  head: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   fileRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -353,25 +380,18 @@ const st = StyleSheet.create({
     gap: 8,
     borderTopWidth: 1,
     borderTopColor: C.border,
-    paddingTop: 8,
+    paddingTop: 10,
   },
   fileName: { color: C.accent, fontFamily: MONO, fontSize: 13, fontWeight: '700' },
   clockBox: {
     backgroundColor: C.sunk,
-    borderWidth: 2,
+    borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 10,
     gap: 4,
   },
-  clockCap: {
-    color: C.dim,
-    fontFamily: MONO,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-    textAlign: 'center',
-  },
+  clockCap: { color: C.dim, fontSize: 11, fontWeight: '800', letterSpacing: 0.8, textAlign: 'center' },
   clock: {
     color: C.accent,
     fontFamily: MONO,
@@ -382,9 +402,9 @@ const st = StyleSheet.create({
   },
   log: {
     backgroundColor: C.sunk,
-    borderWidth: 2,
+    borderWidth: 1,
     borderColor: C.borderHi,
-    borderRadius: 5,
+    borderRadius: 12,
     padding: 10,
     minHeight: 60,
   },

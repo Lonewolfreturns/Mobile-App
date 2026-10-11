@@ -23,6 +23,10 @@ export function humanizeSeconds(total: number): string {
 /** A short, plain suggestion for a failed command — what to go and check. */
 export function failureHint(body: string): string {
   const t = (body || '').toLowerCase();
+  if (t.startsWith('blocked'))
+    return 'the app only talks to local network addresses — check the Base IP in Settings';
+  if (t.includes('too large'))
+    return 'the chamber sent far more data than expected — power-cycle it and try again';
   if (/\bsd\b/.test(t))
     return 'the SD card may be loose, full or unformatted — re-seat it and try again';
   if (t.includes('timed out') || t.includes('timeout'))

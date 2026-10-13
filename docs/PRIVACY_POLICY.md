@@ -22,9 +22,11 @@ information to us or to anyone else.
 ## Information kept on your device
 
 The app stores your settings (the chamber address range and timing values) and
-the measurement files you copy from your chambers. These stay on your device. A
-file only leaves the device when you choose to share it using your phone or
-tablet's own share menu.
+the measurement files you copy from your chambers. The files are saved in the
+folder you choose on your device, or inside the app if you have not chosen one.
+A file only leaves the device when you share it using your phone or tablet's
+own share menu, or if the folder you chose is one that your device syncs to a
+cloud service.
 
 ## Network use
 

@@ -24,6 +24,7 @@ paste into each store's forms.
 | iOS export compliance | Declared as using no encryption |
 | Android permissions | Internet and Vibrate only; storage and overlay permissions removed |
 | Android backups | App data excluded from cloud backup |
+| Saving to shared storage | Uses Android's own folder picker, so no storage permission is requested |
 | Privacy policy in the app | Settings → About & Privacy |
 | Crashes | A failed screen shows a recovery page instead of closing |
 | Tablets | Layout adapts to phone, tablet, portrait and landscape |

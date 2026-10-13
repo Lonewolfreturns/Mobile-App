@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { C, MONO, useWide } from '../theme';
 import { useStore } from '../store';
-import { deleteSaved, SavedFile, shareSaved } from '../files';
+import { APP_FOLDER, canChooseFolder, dayStamp, deleteSaved, SavedFile, shareSaved } from '../files';
 import { tick } from '../haptics';
 import { ActionTile, Btn, Field, Help, LogRow, Panel, ProgressBar, s as ui, SectionLabel, T, useConfirm } from '../ui';
 import { fmtDateTime, humanizeSeconds, parseDateTime, rtcTimestamp, useNow } from '../util';
@@ -84,7 +84,8 @@ function PhoneClock() {
 export default function ControlScreen() {
   const store = useStore();
   const confirm = useConfirm();
-  const { onlineIps, busy, files, progress } = store;
+  const { onlineIps, busy, files, progress, saveLoc } = store;
+  const today = dayStamp(new Date());
   const n = onlineIps.length;
   const wide = useWide();
 
@@ -179,10 +180,46 @@ export default function ControlScreen() {
   };
 
   const copyData = () =>
-    send('Copy the data file from every chamber onto this device?', async () => {
-      await store.downloadAll();
-      setFilesOpen(true);
+    send(
+      'Copy the data file from every chamber onto this device?\n\n' +
+        (saveLoc.kind === 'app'
+          ? 'They will be kept inside the app. Choose a folder first if you want to see them in your file manager.'
+          : `They will be saved into:\n     ${saveLoc.label}${saveLoc.kind === 'browser' ? '' : ` › ${today}`}`),
+      () => store.downloadAll(),
+    );
+
+  const pickFolder = async () => {
+    const ok = await confirm({
+      title: 'CHOOSE A FOLDER',
+      message:
+        'Android will now show your folders.\n\n' +
+        '1.  Open Documents (or any folder you like).\n' +
+        '2.  Tap USE THIS FOLDER, then ALLOW.\n\n' +
+        `The app makes a "${APP_FOLDER}" folder inside it, with a new folder for each day's data.\n\n` +
+        'Android does not let the Download folder itself be picked — choose Documents, or a folder inside Download.',
+      yes: 'CONTINUE',
     });
+    if (ok) await store.chooseSaveFolder();
+  };
+
+  const stopFolder = async () => {
+    const ok = await confirm({
+      title: 'STOP USING THE FOLDER',
+      message: 'Keep new downloads inside the app instead?\n\nFiles already in your folder stay where they are.',
+    });
+    if (ok) store.keepFilesInApp();
+  };
+
+  const moveFiles = async () => {
+    const ok = await confirm({
+      title: 'MOVE THE FILES',
+      message:
+        `Move ${files.length} file${files.length !== 1 ? 's' : ''} out of the app into:\n\n     ${saveLoc.label}\n\n` +
+        'Each one goes into the folder for the day it was downloaded.',
+      yes: 'MOVE',
+    });
+    if (ok) store.moveFilesToFolder();
+  };
 
   const share = async (f: SavedFile) => {
     try {
@@ -226,21 +263,53 @@ export default function ControlScreen() {
         <ActionTile glyph="🕐" line1="SET THE CLOCKS TO NOW" tone="blue" tall={false} disabled={busy} onPress={() => setClocks()} />
       </View>
 
-      <Panel>
-        <View style={st.head}>
-          <Help style={{ flex: 1 }}>
-            📁  {files.length === 0 ? 'No data files copied yet' : `${files.length} data file${files.length !== 1 ? 's' : ''} on this device`}
+      <Panel title="WHERE THE DATA GOES">
+        <T style={st.where}>
+          📁  {saveLoc.label}
+          {saveLoc.kind === 'folder' ? ` › ${today}` : ''}
+        </T>
+        {saveLoc.kind === 'folder' && (
+          <Help>A new folder is made for each day you copy data. Open your file manager to find them.</Help>
+        )}
+        {saveLoc.kind === 'app' && (
+          <Help>
+            Your file manager cannot see files kept inside the app. Choose a folder (Documents is a good one) and every
+            download goes there instead, in a folder for each day.
           </Help>
-          {files.length > 0 && (
-            <Btn small kind="secondary" label={filesOpen ? '▴  HIDE' : '▾  SHOW'} onPress={() => setFilesOpen(!filesOpen)} />
-          )}
-        </View>
+        )}
+        {saveLoc.kind === 'files-app' && <Help>Open the Files app to find them, in a folder for each day.</Help>}
+        {canChooseFolder && (
+          <View style={st.head}>
+            <Btn
+              style={{ flex: 1 }}
+              kind={saveLoc.kind === 'folder' ? 'secondary' : 'primary'}
+              label={saveLoc.kind === 'folder' ? '📂  CHANGE FOLDER' : '📂  CHOOSE A FOLDER'}
+              onPress={pickFolder}
+              disabled={busy}
+            />
+            {saveLoc.kind === 'folder' && <Btn kind="secondary" label="STOP USING IT" onPress={stopFolder} disabled={busy} />}
+          </View>
+        )}
+        {files.length > 0 && (
+          <>
+            <View style={[st.head, st.divide]}>
+              <Help style={{ flex: 1 }}>
+                {files.length} file{files.length !== 1 ? 's' : ''} kept inside the app
+              </Help>
+              <Btn small kind="secondary" label={filesOpen ? '▴  HIDE' : '▾  SHOW'} onPress={() => setFilesOpen(!filesOpen)} />
+            </View>
+            {saveLoc.kind === 'folder' && (
+              <Btn label={`MOVE ${files.length === 1 ? 'IT' : 'THEM'} INTO YOUR FOLDER`} onPress={moveFiles} disabled={busy} />
+            )}
+          </>
+        )}
         {filesOpen &&
           files.map((f) => (
             <View key={f.uri} style={st.fileRow}>
               <View style={{ flex: 1, minWidth: 140 }}>
                 <T style={st.fileName}>{f.name}</T>
                 <Help>
+                  {f.day ? `${f.day}  ·  ` : ''}
                   {f.size.toLocaleString()} B{f.modified ? `  ·  ${fmtDateTime(new Date(f.modified))}` : ''}
                 </Help>
               </View>
@@ -373,6 +442,8 @@ const st = StyleSheet.create({
   },
   stepText: { color: C.accent, fontSize: 24, fontWeight: '700' },
   head: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  where: { color: C.accent, fontSize: 14, fontWeight: '700', lineHeight: 20 },
+  divide: { borderTopWidth: 1, borderTopColor: C.border, paddingTop: 10 },
   fileRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',

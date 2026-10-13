@@ -2,7 +2,17 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { downloadCsv, fetchMonitor, postForm, Reading, setDemoMode } from './api';
-import { listSaved, saveCsv, SavedFile } from './files';
+import {
+  chooseFolder,
+  forgetFolder,
+  listSaved,
+  loadSaveLocation,
+  moveSavedToFolder,
+  saveCsv,
+  SavedFile,
+  saveLocation,
+  SaveLocation,
+} from './files';
 import { buzzFail, buzzOk, buzzWarn } from './haptics';
 import { isLocalBase } from './net';
 import { failureHint, PLAIN_ENDPOINT } from './util';
@@ -92,6 +102,11 @@ type Store = {
   clearActionLog: () => void;
   files: SavedFile[];
   refreshFiles: () => void;
+  /** Where COPY THE DATA puts files right now. */
+  saveLoc: SaveLocation;
+  chooseSaveFolder: () => Promise<void>;
+  keepFilesInApp: () => void;
+  moveFilesToFolder: () => void;
   toast: Toast | null;
   dismissToast: () => void;
   /** The chamber whose detail sheet is open, if any. */
@@ -124,6 +139,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [sysLog, setSysLog] = useState<LogLine[]>([]);
   const [actionLog, setActionLog] = useState<LogLine[]>([]);
   const [files, setFiles] = useState<SavedFile[]>([]);
+  const [saveLoc, setSaveLoc] = useState<SaveLocation>(saveLocation);
   const [toast, setToast] = useState<Toast | null>(null);
   const [selectedIp, setSelectedIp] = useState<string | null>(null);
 
@@ -172,6 +188,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     refreshFiles();
+    loadSaveLocation().then(() => setSaveLoc(saveLocation()));
     AsyncStorage.getItem(SETTINGS_KEY)
       .then((raw) => {
         if (raw) adopt(sanitizeSettings(JSON.parse(raw)));
@@ -372,20 +389,61 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const downloadAll = useCallback(
     async (only?: string[]) => {
+      let fellBack = false;
       await runAll(
         '/download',
         async (ip) => {
           // A whole data file takes longer than a status page; give it more room.
           const { filename, text } = await downloadCsv(ip, Math.max(30, settingsRef.current.httpTimeout));
-          saveCsv(filename, text);
-          return `Saved → ${filename}  (${text.length.toLocaleString()} B)`;
+          const saved = saveCsv(filename, text);
+          if (saved.warning) fellBack = true;
+          return (
+            `Saved → ${saved.where} › ${filename}  (${text.length.toLocaleString()} B)` +
+            (saved.warning ? `  ⚠ ${saved.warning}` : '')
+          );
         },
         only,
       );
       refreshFiles();
+      if (fellBack) {
+        buzzWarn();
+        say('warn', 'Your folder could not be written to, so the files were kept inside the app. Choose the folder again.');
+      }
     },
-    [runAll, refreshFiles],
+    [runAll, refreshFiles, say],
   );
+
+  const chooseSaveFolder = useCallback(async () => {
+    try {
+      if (!(await chooseFolder())) return;
+      const loc = saveLocation();
+      setSaveLoc(loc);
+      buzzOk();
+      say('ok', `Data will be saved in ${loc.label}`);
+      sys('info', `[FILE] Save folder set to ${loc.label}`);
+    } catch (e: any) {
+      buzzFail();
+      say('err', `That folder cannot be used — ${String(e?.message ?? e).slice(0, 90)}`);
+    }
+  }, [say, sys]);
+
+  const keepFilesInApp = useCallback(() => {
+    forgetFolder();
+    setSaveLoc(saveLocation());
+    sys('info', '[FILE] Save folder cleared — files are kept inside the app');
+  }, [sys]);
+
+  const moveFilesToFolder = useCallback(() => {
+    try {
+      const n = moveSavedToFolder();
+      buzzOk();
+      say('ok', `Moved ${n} file${n !== 1 ? 's' : ''} into your folder`);
+    } catch (e: any) {
+      buzzFail();
+      say('err', `Could not move the files — ${String(e?.message ?? e).slice(0, 90)}`);
+    }
+    refreshFiles();
+  }, [say, refreshFiles]);
 
   const value: Store = {
     ready,
@@ -406,6 +464,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     clearActionLog: useCallback(() => setActionLog([]), []),
     files,
     refreshFiles,
+    saveLoc,
+    chooseSaveFolder,
+    keepFilesInApp,
+    moveFilesToFolder,
     toast,
     dismissToast: useCallback(() => setToast(null), []),
     selectedIp,
